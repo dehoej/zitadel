@@ -3,6 +3,7 @@ package messages
 import (
 	"fmt"
 	"mime"
+	"mime/quotedprintable"
 	"regexp"
 	"strings"
 	"time"
@@ -40,7 +41,6 @@ func (msg *Email) GetContent() (string, error) {
 	if msg.ReplyToAddress != "" {
 		headers["Reply-to"] = msg.ReplyToAddress
 	}
-	headers["Return-Path"] = msg.SenderEmail
 	headers["To"] = strings.Join(msg.Recipients, ", ")
 	headers["Cc"] = strings.Join(msg.CC, ", ")
 	headers["Date"] = time.Now().Format(time.RFC1123Z)
@@ -51,12 +51,18 @@ func (msg *Email) GetContent() (string, error) {
 	}
 
 	//default mime-type is html
-	mime := "MIME-Version: 1.0" + lineBreak + "Content-Type: text/html; charset=\"UTF-8\"" + lineBreak + lineBreak
+	mime := "MIME-Version: 1.0" + lineBreak + "Content-Type: text/html; charset=\"UTF-8\"" + lineBreak
 	if !isHTML(msg.Content) {
-		mime = "MIME-Version: 1.0" + lineBreak + "Content-Type: text/plain; charset=\"UTF-8\"" + lineBreak + lineBreak
+		mime = "MIME-Version: 1.0" + lineBreak + "Content-Type: text/plain; charset=\"UTF-8\"" + lineBreak
+	}
+	mime += "Content-Transfer-Encoding: quoted-printable" + lineBreak + lineBreak
+
+	body, err := qpEncode(msg.Content)
+	if err != nil {
+		return "", err
 	}
 	subject := "Subject: " + bEncodeWord(msg.Subject) + lineBreak
-	message += subject + mime + lineBreak + msg.Content
+	message += subject + mime + body
 
 	return message, nil
 }
@@ -67,6 +73,20 @@ func (msg *Email) GetTriggeringEventType() eventstore.EventType {
 
 func isHTML(input string) bool {
 	return isHTMLRgx.MatchString(input)
+}
+
+// returns the content as quoted-printable (RFC 2045) to keep the body 7bit
+// and the lines within the limits of RFC 5322
+func qpEncode(content string) (string, error) {
+	var b strings.Builder
+	w := quotedprintable.NewWriter(&b)
+	if _, err := w.Write([]byte(content)); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 // returns a RFC1342 "B" encoded string to allow non-ascii characters
